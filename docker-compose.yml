@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  training:
+    image: mtgradient-training:latest
+    tty: true
+    volumes:
+      - ./:/app/mtgradient/
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [ gpu ]
+    # environment:
+    ports:
+      - 8888:8888
+      - 5000:5000
+    command: python -m notebook --allow-root --ip 0.0.0.0 --no-browser
