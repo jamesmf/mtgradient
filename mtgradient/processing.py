@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from .constants import TOTAL_PICKS, CARDS_IN_DRAFT
+from .constants import TOTAL_PICKS, N_CARDS_IN_PACK, N_PICKS_PER_PACK
 
 # To simplify the data, we store a dict with the draft id as the key
 # and the the draft-level data. The picks and options are transformed
@@ -43,7 +43,7 @@ DRAFT_LEVEL_COLS = {
 
 
 def pack_pick_to_index(
-    pack: int, pick: int, n_cards_in_draft: int = CARDS_IN_DRAFT
+    pack: int, pick: int, n_cards_in_pack: int = N_PICKS_PER_PACK
 ) -> int:
     """Convert from a pack and pick to the index
     into the flattened pick list
@@ -55,11 +55,11 @@ def pack_pick_to_index(
     Returns:
         int: index in the flattened pick data
     """
-    return pack * n_cards_in_draft + pick
+    return pack * n_cards_in_pack + pick
 
 
 def round_to_pack_and_pick(
-    round_num: int, n_cards_in_draft: int = CARDS_IN_DRAFT
+    round_num: int, n_cards_in_pack: int = N_PICKS_PER_PACK
 ) -> T.Tuple[int, int]:
     """convert a round
 
@@ -69,8 +69,8 @@ def round_to_pack_and_pick(
     Returns:
         T.Tuple[int, int]: _description_
     """
-    pack_num = round_num // n_cards_in_draft
-    pick_num = round_num % n_cards_in_draft
+    pack_num = round_num // n_cards_in_pack
+    pick_num = round_num % n_cards_in_pack
     return pack_num, pick_num
 
 
@@ -164,6 +164,15 @@ def parse_csv(
                 continue
             parsed = parse_row(row, colmap, card_name_to_id, pack_col_bounds)
             add_row_to_draft_dataset(parsed, dataset)
+    # remove some data that doesn't look right
+    for_removal = set()
+    for draft_id, draft in dataset.items():
+        if draft["event_match_wins"] + draft["event_match_losses"] == 0:
+            for_removal.add(draft_id)
+        if 0 in draft["pick_data"]:
+            for_removal.add(draft_id)
+    for draft_id in list(for_removal):
+        dataset.pop(draft_id)
     return dataset, card_name_to_id
 
 
