@@ -15,5 +15,13 @@ services:
     # environment:
     ports:
       - 8888:8888
-      - 5000:5000
     command: python -m notebook --allow-root --ip 0.0.0.0 --no-browser
+
+  mlflow-server:
+    image: mtgradient-training:latest
+    tty: true
+    volumes:
+      - ./:/app/mtgradient/
+    ports:
+      - 5000:5000
+    command: mlflow ui --host 0.0.0.0
