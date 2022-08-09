@@ -303,6 +303,7 @@ def collate_batch(
     ],
     n_cards_in_pack: int = N_CARDS_IN_PACK,
     device="cpu",
+    inference=False,
 ):
     output: T.Dict[str, torch.Tensor] = {}
     histories = torch.zeros(
@@ -323,29 +324,31 @@ def collate_batch(
             histories[n, m, : len(history_round)] = torch.tensor(history_round)  # type: ignore
         pools[n, : len(x["pool"])] = torch.tensor(x["pool"])  # type: ignore
         pick_options[n, : len(x["options"])] = torch.tensor(x["options"])  # type: ignore
-        try:
-            picks[n] = x["options"].index(x["picked"])  # type: ignore
-        except Exception as e:
-            print("whoops")
-            print(picks[n])
-            print(x["draft"])
-            raise (e)
+        if not inference:
+            try:
+                picks[n] = x["options"].index(x["picked"])  # type: ignore
+            except Exception as e:
+                print("whoops")
+                print(picks[n])
+                print(x["draft"])
+                raise (e)
 
     output["history"] = histories
     output["pool"] = pools
     output["pick_options"] = pick_options
-    output["picks"] = picks
-    output["round"] = torch.tensor([x["round"] for x in inputs], dtype=torch.int, device=device)  # type: ignore
+    if not inference:
+        output["picks"] = picks
+        output["round"] = torch.tensor([x["round"] for x in inputs], dtype=torch.int, device=device)  # type: ignore
 
-    if "wins_weight" in inputs[0]:
-        win_weights = torch.tensor([x["wins_weight"] for x in inputs], dtype=torch.float, device=device)  # type: ignore
-        pick_weights = torch.tensor([x["pick_weight"] for x in inputs], dtype=torch.float, device=device)  # type: ignore
-        output["wins_weights"] = win_weights
-        output["pick_weights"] = pick_weights
-    if "num_wins" in inputs[0]:
-        wins = torch.tensor(
-            [x["num_wins"] for x in inputs], dtype=torch.float, device=device
-        )
-        output["num_wins"] = wins
+        if "wins_weight" in inputs[0]:
+            win_weights = torch.tensor([x["wins_weight"] for x in inputs], dtype=torch.float, device=device)  # type: ignore
+            pick_weights = torch.tensor([x["pick_weight"] for x in inputs], dtype=torch.float, device=device)  # type: ignore
+            output["wins_weights"] = win_weights
+            output["pick_weights"] = pick_weights
+        if "num_wins" in inputs[0]:
+            wins = torch.tensor(
+                [x["num_wins"] for x in inputs], dtype=torch.float, device=device
+            )
+            output["num_wins"] = wins
 
     return output

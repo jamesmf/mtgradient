@@ -30,6 +30,7 @@ class DashFollower(Follower):
         super().__init__(*args, **kwargs)
         self.pack_number = ""
         self.pick_number = ""
+        # self.history = {}
 
     def picked_card(self, json_obj: Dict[str, Any], mode: str):
         if not hasattr(self, "pool_card_ids"):
@@ -67,7 +68,9 @@ class DashFollower(Follower):
             and hasattr(self, "color_tracker")
             and hasattr(self, "df")
         ):
-            self.update_lanes(self.alsa_tracker, self.color_tracker, self.df)
+            self.update_lanes(
+                self.alsa_tracker, self.color_tracker, self.df, self.history
+            )
 
     def _Follower__retry_post(self, *args, **kwargs):
         """
@@ -112,7 +115,6 @@ class DashFollower(Follower):
             return
 
         json_obj = self._Follower__extract_payload(json_obj)
-        #         print(json_obj)
         if type(json_obj) != dict:
             return
 
@@ -149,6 +151,7 @@ class DashFollower(Follower):
         alsa_dict: ALSATrackerType,
         color_tracker: ColorTrackerType,
         data: pd.DataFrame,
+        history: Dict[str, List[str]],
     ):
         """
         Calculate the difference in ALSA for each card and
@@ -159,9 +162,9 @@ class DashFollower(Follower):
             return
         pack_num = self.pack_number
         pick_num = self.pick_number
-        # don't read into info from pack 1
-        if pick_num == 1:
-            return
+        # # don't read into info from pack 1
+        # if pick_num == 1:
+        #     return
         pp_string = f"{pack_num}_{pick_num}"
         if pp_string in alsa_dict:
             return
@@ -169,7 +172,8 @@ class DashFollower(Follower):
             return
         if len(self.pick_options) == 0:
             return
-        card_data = data.loc[self.pick_options, ["color", "alsa"]].copy()
+        pick_opts = [i for i in self.pick_options if i in data.index]
+        card_data = data.loc[pick_opts, ["color", "alsa", "name"]].copy()
         card_data["pack"] = pack_num
         card_data["pick"] = pick_num
 
@@ -177,6 +181,7 @@ class DashFollower(Follower):
         card_data["alsa_diff"] = card_data.alsa.apply(lambda x: pick_num - x)
 
         alsa_dict[pp_string] = {}
+        history[pp_string] = card_data.name.values
         for color, alsa_diff in card_data[["color", "alsa_diff"]].values:
             # ignore colorless cards
             if not color or str(color) == "nan":
