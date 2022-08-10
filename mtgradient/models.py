@@ -6,7 +6,7 @@ from torchmetrics import Accuracy, MeanAbsoluteError
 import torchmetrics.functional
 import sklearn.metrics
 
-from .constants import N_ROUNDS, N_CARDS_IN_PACK
+from .constants import N_PACKS, N_CARDS_IN_PACK
 
 
 class DraftTransformer(pl.LightningModule):
@@ -32,6 +32,7 @@ class DraftTransformer(pl.LightningModule):
         n_heads_pick: int = 8,
         n_layers_pick: int = 4,
         n_steps: int = 15000,
+        dropout: float = 0.25,
     ):
         super().__init__()
 
@@ -84,17 +85,18 @@ class DraftTransformer(pl.LightningModule):
             torch.nn.Linear(int(emb_dim / 2), 1),
             torch.nn.LogSoftmax(dim=1),
         )
+        self.dropout = torch.nn.Dropout(dropout)
         # self.softmax = torch.nn.Softmax(dim=1)
 
         self.pick_loss = torch.nn.NLLLoss(reduction="none")
         self.wins_loss = torch.nn.L1Loss(reduction="none")
         self.metrics: T.Dict[str, T.Union[Accuracy, MeanAbsoluteError]] = {}
         for split in ("train", "val", "test"):
-            acc = Accuracy()
+            acc = Accuracy(average="samples")
             setattr(self, f"{split}_accuracy", acc)
             self.metrics[split] = acc
             for n in range(self.n_cards_in_pack * 3):
-                accn = Accuracy()
+                accn = Accuracy(average="samples")
                 key = f"{split}_accuracy_round_{n:0>2}"
                 setattr(self, key, accn)
                 self.metrics[key] = accn
@@ -115,14 +117,14 @@ class DraftTransformer(pl.LightningModule):
         pool = x["pool"]  # (batch_size, max_round_in_batch)
         pick_options = x["pick_options"]  #  (batch_size, n_cards_in_pack)
 
-        history_emb = self.card_embedding(
-            history
+        history_emb = self.dropout(
+            self.card_embedding(history)
         )  # (batch_size, max_round_in_batch, n_cards_in_pack, emb_dim)
-        pool_emb = self.card_embedding(
-            pool
+        pool_emb = self.dropout(
+            self.card_embedding(pool)
         )  # (batch_size, max_round_in_batch, emb_dim)
-        pick_options_emb = self.card_embedding(
-            pick_options
+        pick_options_emb = self.dropout(
+            self.card_embedding(pick_options)
         )  #  (batch_size, n_cards_in_pack, emb_dim)
 
         # take the pool data and use it to predict the number of wins
@@ -164,6 +166,7 @@ class DraftTransformer(pl.LightningModule):
         # now concatenate the pick options, the pool so far and the history of cards passed
         # and pass it through the transformer
         concatenated = torch.cat([pick_options_emb, pool_emb, history_emb], dim=1)
+        concatenated = self.dropout(concatenated)
         pick_enc = self.pick_transformer(concatenated)[:, : self.n_cards_in_pack]
         pick_linear_outputs = self.pick_linear(pick_enc)[:, :, 0]
 
@@ -321,7 +324,12 @@ def collate_batch(
     for n, x in enumerate(inputs):
         history_n = x["history"]
         for m, history_round in enumerate(history_n):
-            histories[n, m, : len(history_round)] = torch.tensor(history_round)  # type: ignore
+            try:
+                histories[n, m, : len(history_round)] = torch.tensor(history_round)  # type: ignore
+            except Exception as e:
+                print(history_round)
+                print(inputs[n])
+                raise e
         pools[n, : len(x["pool"])] = torch.tensor(x["pool"])  # type: ignore
         pick_options[n, : len(x["options"])] = torch.tensor(x["options"])  # type: ignore
         if not inference:
