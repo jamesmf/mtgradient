@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from .processing import DraftDataType, round_to_pack_and_pick
-from .constants import N_ROUNDS, N_CARDS_IN_PACK, TOTAL_PICKS, N_PICKS_PER_PACK
+from .constants import N_PACKS, N_CARDS_IN_PACK, TOTAL_PICKS, N_PICKS_PER_PACK
 
 # downweight the first pick (anti-raredrafting)
 # and place most of the emphasis on the rounds with
@@ -59,7 +59,7 @@ class DraftDataset(torch.utils.data.Dataset):
         pick_weighting: T.Dict[int, float] = DEFAULT_PICK_WEIGHTING,
         win_pred_weighting: T.Dict[int, float] = DEFAULT_WIN_PRED_WEIGHING,
         rank_weighting: T.Dict[str, float] = DEFAULT_WEIGHTING_BY_RANK,
-        num_rounds: int = N_ROUNDS,
+        total_picks: int = TOTAL_PICKS,
         n_picks_in_pack: int = N_PICKS_PER_PACK,
         static_pick_indices: T.Optional[T.Dict[int, int]] = None,
         use_all: bool = False,
@@ -70,7 +70,7 @@ class DraftDataset(torch.utils.data.Dataset):
         self.recency_weight = recency_weight
         self.pick_weighting = pick_weighting
         self.win_pred_weighting = win_pred_weighting
-        self.num_rounds = num_rounds
+        self.total_picks = total_picks
         self.n_picks_in_pack = n_picks_in_pack
         self.rank_weighting = rank_weighting
         self.static_pick_indices = static_pick_indices
@@ -80,7 +80,7 @@ class DraftDataset(torch.utils.data.Dataset):
         if not self.use_all:
             return len(self.dataset)
         else:
-            return self.num_rounds * len(self.dataset)
+            return self.total_picks * len(self.dataset)
 
     def __getitem__(self, idx: int):
         if not self.use_all:

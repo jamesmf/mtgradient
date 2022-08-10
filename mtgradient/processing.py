@@ -114,11 +114,11 @@ def parse_row(
     # base = {colmap[n]["name"]: val for n, val in enumerate(row[:11])}
     base = {v["name"]: row[k] for k, v in colmap.items() if v["type"] == "basic"}
     pack_names = [
-        colmap[n]["name"]
+        colmap[n + pack_col_bounds[0]]["name"]
         for n, val in enumerate(row[pack_col_bounds[0] : pack_col_bounds[1] + 1])
         if val == "1"
     ]
-    pack_names += [base["pick"]]
+    # pack_names += [base["pick"]]
     np.random.shuffle(pack_names)
     pick_ind = pack_names.index(base["pick"])
     for p in pack_names:
@@ -154,7 +154,7 @@ def parse_csv(
     colmap = get_colmap(cols)
     card_name_to_id: T.Dict[str, int] = {"": 0}
     pack_inds = [ind for ind, val in colmap.items() if val["type"] == "pack"]
-    pack_col_bounds = (min(pack_inds), max(pack_inds))
+    pack_col_bounds = (min(pack_inds), max(pack_inds) + 1)
     with open(csv_path, "r") as f:
         consumer = csv.reader(f)
         if verbose:
