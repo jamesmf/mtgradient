@@ -12,7 +12,7 @@ from .constants import N_PACKS, N_CARDS_IN_PACK, TOTAL_PICKS, N_PICKS_PER_PACK
 # and place most of the emphasis on the rounds with
 # a meaningful number of options
 DEFAULT_PICK_WEIGHTING = {
-    0: 0.6,
+    0: 0.4,
     1: 1.0,
     2: 1.0,
     3: 1.0,
@@ -40,10 +40,10 @@ DEFAULT_WIN_PRED_WEIGHING = {k: (k + 1) / TOTAL_PICKS for k in range(TOTAL_PICKS
 
 # weight loss for higher levels of play much higher
 DEFAULT_WEIGHTING_BY_RANK = {
-    "mythic": 3,
-    "diamond": 2.5,
-    "platinum": 1.5,
-    "gold": 0.5,
+    "mythic": 8,
+    "diamond": 8,
+    "platinum": 4,
+    "gold": 1,
     "silver": 0.25,
     "bronze": 0.125,
     "": 0.01,
