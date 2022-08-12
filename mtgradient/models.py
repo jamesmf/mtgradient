@@ -30,8 +30,8 @@ class DraftTransformer(pl.LightningModule):
         n_heads_win: int = 8,
         n_layers_win: int = 3,
         n_heads_pick: int = 8,
-        n_layers_pick: int = 4,
-        n_steps: int = 15000,
+        n_layers_pick: int = 6,
+        n_steps: int = 30000,
         dropout: float = 0.25,
     ):
         super().__init__()
@@ -95,16 +95,16 @@ class DraftTransformer(pl.LightningModule):
             acc = Accuracy(average="samples")
             setattr(self, f"{split}_accuracy", acc)
             self.metrics[split] = acc
-            for n in range(self.n_cards_in_pack * 3):
-                accn = Accuracy(average="samples")
-                key = f"{split}_accuracy_round_{n:0>2}"
-                setattr(self, key, accn)
-                self.metrics[key] = accn
+            # for n in range(self.n_cards_in_pack * 3):
+            #     accn = Accuracy(average="samples")
+            #     key = f"{split}_accuracy_round_{n:0>2}"
+            #     setattr(self, key, accn)
+            #     self.metrics[key] = accn
 
-                mae = MeanAbsoluteError()
-                key = f"{split}_mae_round_{n:0>2}"
-                setattr(self, key, mae)
-                self.metrics[key] = mae
+            #     mae = MeanAbsoluteError()
+            #     key = f"{split}_mae_round_{n:0>2}"
+            #     setattr(self, key, mae)
+            #     self.metrics[key] = mae
 
     # @torch.jit.script
     def _forward(
@@ -200,36 +200,29 @@ class DraftTransformer(pl.LightningModule):
             lrs = self.lr_schedulers()
             self.log(f"lr", lrs.get_last_lr()[0])  # type: ignore
 
-        for round in list(set(x["round"])):
-            mask = x["round"] == round
-            # print(x["picks"], round, mask)
-            if mask.shape[0] > 0:
-                self.log(
-                    f"epoch/{mode}/acc_round_{round:0>2}",
-                    self.metrics[f"{mode}_accuracy_round_{round:0>2}"](
-                        pick_preds[mask],
-                        x["picks"][mask],
-                    ),
-                    on_epoch=True,
-                    on_step=False,
-                )
-                self.log(
-                    f"epoch/{mode}/wins_round_{round:0>2}",
-                    self.metrics[f"{mode}_mae_round_{round:0>2}"](
-                        win_preds[mask],
-                        x["num_wins"][mask],
-                    ),
-                    on_epoch=True,
-                    on_step=False,
-                )
+        # for round in list(set(x["round"])):
+        #     mask = x["round"] == round
+        #     # print(x["picks"], round, mask)
+        #     if mask.shape[0] > 0:
+        #         self.log(
+        #             f"epoch/{mode}/acc_round_{round:0>2}",
+        #             self.metrics[f"{mode}_accuracy_round_{round:0>2}"](
+        #                 pick_preds[mask],
+        #                 x["picks"][mask],
+        #             ),
+        #             on_epoch=True,
+        #             on_step=False,
+        #         )
+        #         self.log(
+        #             f"epoch/{mode}/wins_round_{round:0>2}",
+        #             self.metrics[f"{mode}_mae_round_{round:0>2}"](
+        #                 win_preds[mask],
+        #                 x["num_wins"][mask],
+        #             ),
+        #             on_epoch=True,
+        #             on_step=False,
+        #         )
 
-        # self.metric_data_holder[mode]["pick_preds"].append(pick_preds.detach())
-        # self.metric_data_holder[mode]["pick_targets"].append(x["picks"].detach())
-        # self.metric_data_holder[mode]["wins_preds"].append(win_preds.detach())
-        # self.metric_data_holder[mode]["wins_targets"].append(x["num_wins"].detach())
-        # self.metric_data_holder[mode]["rounds"].append(x["round"].detach())
-        # print(mode, self.metric_data_holder[mode])
-        # print(self.metric_data_holder)
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -238,55 +231,6 @@ class DraftTransformer(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         return self.step(batch, mode="val")
 
-    # def general_end_step(self, mode: str):
-    #     print(mode)
-    #     print(self.metric_data_holder)
-    #     full_wins_target = torch.concat(self.metric_data_holder[mode]["wins_targets"])
-    #     full_wins_preds = torch.concat(self.metric_data_holder[mode]["wins_preds"])
-    #     full_picks_target = torch.concat(self.metric_data_holder[mode]["pick_targets"])
-    #     full_picks_preds = torch.concat(self.metric_data_holder[mode]["pick_preds"])
-    #     full_rounds = torch.concat(self.metric_data_holder[mode]["rounds"])
-
-    #     self.log(
-    #         f"epoch/{mode}/acc", self.accs[mode](full_picks_preds, full_picks_target)
-    #     )
-    #     for round in range(int(full_rounds.max())):
-    #         self.log(
-    #             f"epoch/{mode}/acc_round_{round}",
-    #             self.accs[mode](
-    #                 full_picks_preds[full_rounds == round],
-    #                 full_picks_target[full_rounds == round],
-    #             ),
-    #         )
-    #         self.log(
-    #             f"epoch/{mode}/wins_round_{round}",
-    #             torchmetrics.functional.mean_absolute_error(
-    #                 full_wins_preds[full_rounds == round],
-    #                 full_wins_target[full_rounds == round],
-    #             ),
-    #         )
-
-    # def on_train_epoch_end(self) -> None:
-    #     print("epoch end, train")
-    #     self.general_end_step("train")
-    #     self.reset_metric_holder("train")
-    #     return super().on_train_epoch_end()
-
-    # def on_validation_epoch_end(self) -> None:
-    #     print("epoch end, val")
-    #     self.general_end_step("val")
-    #     self.reset_metric_holder("val")
-    #     return super().on_validation_epoch_end()
-
-    # def reset_metric_holder(self, mode: str):
-    #     self.metric_data_holder[mode] = {
-    #         "wins_preds": [],
-    #         "wins_targets": [],
-    #         "pick_preds": [],
-    #         "pick_targets": [],
-    #         "rounds": [],
-    #     }
-
     def configure_optimizers(self):
 
         optimizer = torch.optim.Adam(params=self.parameters(), lr=1e-6)
@@ -294,8 +238,8 @@ class DraftTransformer(pl.LightningModule):
             optimizer,
             max_lr=1e-4,
             total_steps=self.n_steps,
-            pct_start=0.15,
-            div_factor=20,
+            pct_start=0.05,
+            div_factor=250,
         )
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
