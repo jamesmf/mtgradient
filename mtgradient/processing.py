@@ -171,6 +171,10 @@ def parse_csv(
             for_removal.add(draft_id)
         if 0 in draft["pick_data"]:
             for_removal.add(draft_id)
+        if draft["rank"] not in ("mythic", "diamond", "platinum", "gold"):
+            for_removal.add(draft_id)
+        if float(draft["user_game_win_rate_bucket"]) <= 0.5:
+            for_removal.add(draft_id)
     for draft_id in list(for_removal):
         dataset.pop(draft_id)
     return dataset, card_name_to_id
