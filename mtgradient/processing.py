@@ -1,3 +1,4 @@
+from collections import defaultdict
 import json
 import os
 import pickle
@@ -11,6 +12,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from .constants import TOTAL_PICKS, N_CARDS_IN_PACK, N_PICKS_PER_PACK
+from .expansion_info import expansion_dict
 
 # To simplify the data, we store a dict with the draft id as the key
 # and the the draft-level data. The picks and options are transformed
@@ -134,14 +136,16 @@ def add_row_to_draft_dataset(
     row: T.Dict[str, T.Union[str, T.List[int]]], dataset: T.Dict[str, T.Any]
 ):
     draft_id = row["draft_id"]
+    expansion_str = str(row["expansion"])
+    expansion = expansion_dict[expansion_str]
     if draft_id not in dataset:
         dataset[draft_id] = {k: DRAFT_LEVEL_COLS[k](row[k]) for k in row.keys() if k in DRAFT_LEVEL_COLS}  # type: ignore
-        dataset[draft_id]["pack_data"] = [[] for _ in range(TOTAL_PICKS)]  # type: ignore
-        dataset[draft_id]["pick_data"] = [0 for _ in range(TOTAL_PICKS)]  # type: ignore
+        dataset[draft_id]["pack_data"] = [[] for _ in range(expansion.total_picks)]  # type: ignore
+        dataset[draft_id]["pick_data"] = [0 for _ in range(expansion.total_picks)]  # type: ignore
 
     pack_number = int(row["pack_number"])  # type: ignore
     pick_number = int(row["pick_number"])  # type: ignore
-    index = pack_pick_to_index(pack_number, pick_number)
+    index = pack_pick_to_index(pack_number, pick_number, expansion.n_picks_per_pack)
     dataset[draft_id]["pack_data"][index] = row["pack"]  # type: ignore
     dataset[draft_id]["pick_data"][index] = row["pack"][row["pick_ind"]]  # type: ignore
 
@@ -166,17 +170,28 @@ def parse_csv(
             add_row_to_draft_dataset(parsed, dataset)
     # remove some data that doesn't look right
     for_removal = set()
+    removal_reasons = defaultdict(list)
     for draft_id, draft in dataset.items():
         if draft["event_match_wins"] + draft["event_match_losses"] == 0:
             for_removal.add(draft_id)
+            removal_reasons[draft_id].append("invalid_event_match_wins_plus_losses")
         if 0 in draft["pick_data"]:
             for_removal.add(draft_id)
+            removal_reasons[draft_id].append("invalid_pick_data")
+            print(draft["pick_data"])
         if draft["rank"] not in ("mythic", "diamond", "platinum", "gold"):
             for_removal.add(draft_id)
+            removal_reasons[draft_id].append("rank_below_gold")
         if float(draft["user_game_win_rate_bucket"]) <= 0.5:
             for_removal.add(draft_id)
+            removal_reasons[draft_id].append("win_rate_too_low")
+    if verbose:
+        print(f"number of drafts: {len(dataset)}")
+        print(f"number to remove: {len(for_removal)}")
     for draft_id in list(for_removal):
         dataset.pop(draft_id)
+        if verbose:
+            print(f"{draft_id} removed because: {removal_reasons[draft_id]}")
     return dataset, card_name_to_id
 
 

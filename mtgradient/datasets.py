@@ -93,6 +93,10 @@ class DraftDataset(torch.utils.data.Dataset):
             draft_num = int(idx / 3 / self.n_picks_in_pack)
             draft = self.dataset[self.idx_to_draft[draft_num]]
             round_num = idx % (3 * self.n_picks_in_pack)
+            # if we combine drafts with different number of rounds, lazily
+            # augment the smaller drafts
+            if round_num >= len(draft["pack_data"]):
+                round_num = np.random.randint(0, len(draft["pack_data"]))
 
         pick_weight, wins_weight = self.get_weights(draft, round_num)
 
