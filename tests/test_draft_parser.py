@@ -62,3 +62,32 @@ def test_parse_row_1(parsed_csv):
     assert (
         len(p0.difference(card_id_set)) == 0
     ), "incorrect parsing of the p1p1 (round 0) of the first draft in the test dataset"
+
+
+def test_wheel_logic(parsed_csv):
+    """Test that we correctly label which cards in a pack wheel"""
+    ds, card_ids = parsed_csv
+    card_ids_inv = {v: k for k, v in card_ids.items()}
+    card_names_pack0 = [
+        card_ids_inv[i] for i in ds["dace9c349b224cf4a12a151d578ce870"]["pack_data"][0]
+    ]
+    print(ds["dace9c349b224cf4a12a151d578ce870"])
+    assert (
+        "wheels" in ds["dace9c349b224cf4a12a151d578ce870"]
+    ), f"key 'wheels' not found in draft"
+
+    wheel_data = ds["dace9c349b224cf4a12a151d578ce870"]["wheels"][0]
+
+    cards_that_should_wheel = [
+        "Akki Ronin",
+        "Chainflail Centipede",
+        "Jukai Trainee",
+        "Moonsnare Prototype",
+        "Okiba Reckoner Raid",
+        "Plains",
+        "Virus Beetle",
+    ]
+    for ind, card_name in enumerate(card_names_pack0):
+        wheel = wheel_data[ind]
+        if card_name in cards_that_should_wheel:
+            assert wheel == 1, f"Card that should wheel {card_name} had wheel = {wheel}"

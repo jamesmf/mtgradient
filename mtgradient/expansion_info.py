@@ -22,4 +22,10 @@ class HBG(MTGSet):
         super().__init__()
 
 
-expansion_dict: T.Dict[str, MTGSet] = {"NEO": NEO(), "HBG": HBG()}
+class SNC(MTGSet):
+    def __init__(self):
+        self.n_cards_in_pack = 15
+        super().__init__()
+
+
+expansion_dict: T.Dict[str, MTGSet] = {"NEO": NEO(), "HBG": HBG(), "SNC": SNC()}

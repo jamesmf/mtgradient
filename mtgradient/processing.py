@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from .constants import TOTAL_PICKS, N_CARDS_IN_PACK, N_PICKS_PER_PACK
+from .constants import TOTAL_PICKS, N_CARDS_IN_PACK, N_PICKS_PER_PACK, MAX_WHEEL_ROUND
 from .expansion_info import expansion_dict
 
 # To simplify the data, we store a dict with the draft id as the key
@@ -150,6 +150,25 @@ def add_row_to_draft_dataset(
     dataset[draft_id]["pick_data"][index] = row["pack"][row["pick_ind"]]  # type: ignore
 
 
+def add_wheels(ds: DictDataset):
+    """Adds the 'wheels' attribute to each draft round"""
+    for draft, draft_dict in ds.items():
+        pack_data = T.cast(T.List[T.List[int]], draft_dict["pack_data"])
+        wheels: T.List[T.List[int]] = []
+        for row_ind, row in enumerate(pack_data):
+            if row_ind > MAX_WHEEL_ROUND:
+                continue
+            wheel_data = []
+            pack_plus_8: T.List[int] = pack_data[row_ind + 8]
+            for card_id in pack_data[row_ind]:
+                if card_id in pack_plus_8:
+                    wheel_data.append(1)
+                else:
+                    wheel_data.append(0)
+            wheels.append(wheel_data)
+        draft_dict["wheels"] = wheels
+
+
 def parse_csv(
     csv_path: str, verbose: bool = True
 ) -> T.Tuple[DictDataset, T.Dict[str, int]]:
@@ -192,6 +211,7 @@ def parse_csv(
         dataset.pop(draft_id)
         if verbose:
             print(f"{draft_id} removed because: {removal_reasons[draft_id]}")
+    add_wheels(dataset)
     return dataset, card_name_to_id
 
 

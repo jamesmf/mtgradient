@@ -1,4 +1,5 @@
 import typing as T
+import json
 import torch
 import pytorch_lightning as pl
 import numpy as np
@@ -88,6 +89,8 @@ class DraftTransformer(pl.LightningModule):
         self.dropout = torch.nn.Dropout(dropout)
         # self.softmax = torch.nn.Softmax(dim=1)
 
+        self.n_steps_oclr = int(self.n_steps / 2)
+
         self.pick_loss = torch.nn.NLLLoss(reduction="none")
         self.wins_loss = torch.nn.L1Loss(reduction="none")
         self.metrics: T.Dict[str, T.Union[Accuracy, MeanAbsoluteError]] = {}
@@ -105,6 +108,20 @@ class DraftTransformer(pl.LightningModule):
             #     key = f"{split}_mae_round_{n:0>2}"
             #     setattr(self, key, mae)
             #     self.metrics[key] = mae
+
+    def init_embedding(self, weights: np.ndarray):
+        """Initialize the embedding layer with card data
+
+        Args:
+            weights (torch.Tensor): output from card_initializer.featurize_cards()
+
+        Returns:
+            _type_: None
+        """
+        t = torch.tensor(weights, dtype=torch.float)
+        self.card_embedding = torch.nn.Embedding.from_pretrained(
+            t.to(self.device), freeze=False, padding_idx=0
+        )
 
     # @torch.jit.script
     def _forward(
@@ -237,9 +254,9 @@ class DraftTransformer(pl.LightningModule):
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=1e-4,
-            total_steps=self.n_steps,
-            pct_start=0.05,
-            div_factor=250,
+            total_steps=self.n_steps_oclr,
+            pct_start=0.1,
+            div_factor=100,
         )
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
