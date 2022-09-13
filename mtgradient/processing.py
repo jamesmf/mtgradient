@@ -11,23 +11,32 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from .constants import TOTAL_PICKS, N_CARDS_IN_PACK, N_PICKS_PER_PACK, MAX_WHEEL_ROUND
+from .constants import (
+    TOTAL_PICKS,
+    N_CARDS_IN_PACK,
+    N_PICKS_PER_PACK,
+    MAX_WHEEL_ROUND,
+    PlayerRank,
+)
 from .expansion_info import expansion_dict
 
-# To simplify the data, we store a dict with the draft id as the key
-# and the the draft-level data. The picks and options are transformed
-# to a List[int] (ids of picked cards in our id map) and a List[List[int]]
-# (each entry is the ids of the possible cards to pick at that round)
-DraftDataType = T.Dict[
-    str,
-    T.Union[
-        str,
-        int,
-        T.List[int],
-        T.List[T.List[int]],
-    ],
-]
-DictDataset = T.Dict[str, DraftDataType]
+
+class WholeDraft(T.TypedDict, total=False):
+    expansion: str
+    rank_id: int
+    rank: str
+    draft_id: str
+    draft_time: pd.Timestamp
+    pack_data: T.List[T.List[int]]
+    pick_data: T.List[int]
+    maindeck_rates: T.List[int]
+    wheels: T.List[T.List[int]]
+    user_game_win_rate_bucket: float
+    event_match_wins: int
+    event_match_losses: int
+
+
+DictDataset = T.Dict[str, WholeDraft]
 
 
 DRAFT_LEVEL_COLS = {
@@ -112,7 +121,7 @@ def parse_row(
     colmap: T.Dict[int, T.Dict[str, str]],
     card_map: T.Dict[str, int],
     pack_col_bounds: T.Tuple[int, int],
-) -> T.Dict[str, T.Union[str, T.List[int]]]:
+) -> T.Dict[str, T.Union[str, T.List[int], float, int]]:
     # base = {colmap[n]["name"]: val for n, val in enumerate(row[:11])}
     base = {v["name"]: row[k] for k, v in colmap.items() if v["type"] == "basic"}
     pack_names = [
@@ -129,25 +138,35 @@ def parse_row(
     pack = [card_map[i] for i in pack_names]
     base["pack"] = pack
     base["pick_ind"] = pick_ind
+    base["pick_maindeck_rate"] = float(base["pick_maindeck_rate"])
     return base
 
 
 def add_row_to_draft_dataset(
-    row: T.Dict[str, T.Union[str, T.List[int]]], dataset: T.Dict[str, T.Any]
+    row: T.Dict[str, T.Union[str, T.List[int], float, int]], dataset: T.Dict[str, T.Any]
 ):
-    draft_id = row["draft_id"]
+    draft_id = T.cast(str, row["draft_id"])
     expansion_str = str(row["expansion"])
     expansion = expansion_dict[expansion_str]
     if draft_id not in dataset:
-        dataset[draft_id] = {k: DRAFT_LEVEL_COLS[k](row[k]) for k in row.keys() if k in DRAFT_LEVEL_COLS}  # type: ignore
+        dataset[draft_id] = {
+            k: DRAFT_LEVEL_COLS[k](row[k]) for k in row.keys() if k in DRAFT_LEVEL_COLS
+        }
         dataset[draft_id]["pack_data"] = [[] for _ in range(expansion.total_picks)]  # type: ignore
         dataset[draft_id]["pick_data"] = [0 for _ in range(expansion.total_picks)]  # type: ignore
+        dataset[draft_id]["maindeck_rates"] = [0 for _ in range(expansion.total_picks)]  # type: ignore
+        dataset[draft_id]["rank_id"] = (
+            PlayerRank[T.cast(str, row["rank"])].value
+            if row["rank"] in PlayerRank.__members__
+            else PlayerRank.bronze.value
+        )
 
     pack_number = int(row["pack_number"])  # type: ignore
     pick_number = int(row["pick_number"])  # type: ignore
     index = pack_pick_to_index(pack_number, pick_number, expansion.n_picks_per_pack)
     dataset[draft_id]["pack_data"][index] = row["pack"]  # type: ignore
     dataset[draft_id]["pick_data"][index] = row["pack"][row["pick_ind"]]  # type: ignore
+    dataset[draft_id]["maindeck_rates"][index] = row["pick_maindeck_rate"]  # type: ignore
 
 
 def add_wheels(ds: DictDataset):
@@ -170,7 +189,7 @@ def add_wheels(ds: DictDataset):
 
 
 def parse_csv(
-    csv_path: str, verbose: bool = True
+    csv_path: str, verbose: bool = False
 ) -> T.Tuple[DictDataset, T.Dict[str, int]]:
     dataset = {}  # type: ignore
     cols = pd.read_csv(csv_path, nrows=0).columns
@@ -212,6 +231,22 @@ def parse_csv(
         if verbose:
             print(f"{draft_id} removed because: {removal_reasons[draft_id]}")
     add_wheels(dataset)
+    for key in dataset.keys():
+        raw = dataset[key]
+        dataset[key] = WholeDraft(
+            expansion=raw["expansion"],
+            rank=raw["rank"],
+            rank_id=raw["rank_id"],
+            draft_id=raw["draft_id"],
+            draft_time=raw["draft_time"],
+            pick_data=raw["pick_data"],
+            pack_data=raw["pack_data"],
+            maindeck_rates=raw["maindeck_rates"],
+            wheels=raw["wheels"],
+            user_game_win_rate_bucket=raw["user_game_win_rate_bucket"],
+            event_match_wins=raw["event_match_wins"],
+            event_match_losses=raw["event_match_losses"],
+        )
     return dataset, card_name_to_id
 
 

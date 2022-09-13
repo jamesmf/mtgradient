@@ -72,6 +72,7 @@ def test_wheel_logic(parsed_csv):
         card_ids_inv[i] for i in ds["dace9c349b224cf4a12a151d578ce870"]["pack_data"][0]
     ]
     print(ds["dace9c349b224cf4a12a151d578ce870"])
+
     assert (
         "wheels" in ds["dace9c349b224cf4a12a151d578ce870"]
     ), f"key 'wheels' not found in draft"
@@ -91,3 +92,23 @@ def test_wheel_logic(parsed_csv):
         wheel = wheel_data[ind]
         if card_name in cards_that_should_wheel:
             assert wheel == 1, f"Card that should wheel {card_name} had wheel = {wheel}"
+
+
+def test_maindeck_rate_in_draft(parsed_csv):
+    ds, card_ids = parsed_csv
+    maindeck_rates = ds["dace9c349b224cf4a12a151d578ce870"]["maindeck_rates"]
+    assert (
+        maindeck_rates[0] == 1
+    ), f"maindeck_rate of dace9c349b224cf4a12a151d578ce870 pick 0 should be 1.0, found {maindeck_rates[0]}"
+    assert (
+        min(maindeck_rates) == 0
+    ), f"min(maindeck_rates) of dace9c349b224cf4a12a151d578ce870 should be 0"
+    assert (
+        max(maindeck_rates) == 1
+    ), f"max(maindeck_rates) of dace9c349b224cf4a12a151d578ce870 should be 1"
+
+
+def test_fail(parsed_csv):
+    ds, card_ids = parsed_csv
+    print(ds["dace9c349b224cf4a12a151d578ce870"])
+    assert False
