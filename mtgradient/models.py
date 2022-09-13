@@ -1,4 +1,5 @@
 import typing as T
+import json
 import torch
 import pytorch_lightning as pl
 import numpy as np
@@ -27,8 +28,8 @@ class DraftTransformer(pl.LightningModule):
         n_cards: int,
         emb_dim: int,
         n_cards_in_pack: int = N_CARDS_IN_PACK,
-        n_heads_win: int = 8,
-        n_layers_win: int = 3,
+        n_heads_pool: int = 8,
+        n_layers_pool: int = 3,
         n_heads_pick: int = 8,
         n_layers_pick: int = 6,
         n_steps: int = 30000,
@@ -56,18 +57,25 @@ class DraftTransformer(pl.LightningModule):
 
         # # embedding for each round
         # self.round_embedding = torch.nn.Embedding(self.total_picks, emb_dim)
-        wins_encoder_layer = torch.nn.TransformerEncoderLayer(
+        pool_encoder_layer = torch.nn.TransformerEncoderLayer(
             d_model=emb_dim,
-            nhead=n_heads_win,
+            nhead=n_heads_pool,
             batch_first=True,
             activation="gelu",
         )
-        self.wins_transformer = torch.nn.TransformerEncoder(
-            wins_encoder_layer,
-            num_layers=n_layers_win,
+        self.pool_transformer = torch.nn.TransformerEncoder(
+            pool_encoder_layer,
+            num_layers=n_layers_pool,
         )
         self.wins_linear = torch.nn.Sequential(
             torch.nn.GLU(), torch.nn.Linear(int(emb_dim / 2), 1)
+        )
+
+        self.maindeck_pred_head = torch.nn.Sequential(
+            torch.nn.GLU(),
+            torch.nn.Linear(int(emb_dim / 2), emb_dim),
+            torch.nn.GELU(),
+            torch.nn.Linear(emb_dim, 1),
         )
 
         pick_encoder_layer = torch.nn.TransformerEncoderLayer(
@@ -88,8 +96,11 @@ class DraftTransformer(pl.LightningModule):
         self.dropout = torch.nn.Dropout(dropout)
         # self.softmax = torch.nn.Softmax(dim=1)
 
+        self.n_steps_oclr = self.n_steps
+
         self.pick_loss = torch.nn.NLLLoss(reduction="none")
         self.wins_loss = torch.nn.L1Loss(reduction="none")
+        self.maindeck_loss = torch.nn.BCEWithLogitsLoss(reduction="none")
         self.metrics: T.Dict[str, T.Union[Accuracy, MeanAbsoluteError]] = {}
         for split in ("train", "val", "test"):
             acc = Accuracy(average="samples")
@@ -106,12 +117,26 @@ class DraftTransformer(pl.LightningModule):
             #     setattr(self, key, mae)
             #     self.metrics[key] = mae
 
+    def init_embedding(self, weights: np.ndarray):
+        """Initialize the embedding layer with card data
+
+        Args:
+            weights (torch.Tensor): output from card_initializer.featurize_cards()
+
+        Returns:
+            _type_: None
+        """
+        t = torch.tensor(weights, dtype=torch.float)
+        self.card_embedding = torch.nn.Embedding.from_pretrained(
+            t.to(self.device), freeze=False, padding_idx=0
+        )
+
     # @torch.jit.script
     def _forward(
         self,
         x: T.Dict[str, torch.Tensor],
         device: str,
-    ) -> T.Tuple[torch.Tensor, torch.Tensor]:  # type: ignore
+    ) -> T.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:  # type: ignore
 
         history = x["history"]  # (batch_size, total_picks, n_cards_in_pack)
         pool = x["pool"]  # (batch_size, max_round_in_batch)
@@ -139,11 +164,14 @@ class DraftTransformer(pl.LightningModule):
 
         pool_mask = torch.concat((pool_mask_zero, pool_mask), dim=1)
         pool_mean = pool_emb.mean(dim=1).unsqueeze(1)
-        win_enc = self.wins_transformer(
+        pool_enc = self.pool_transformer(
             torch.concat((pool_mean, pool_emb), dim=1),
             src_key_padding_mask=pool_mask,
-        )[:, 0]
-        win_prob = torch.clip(self.wins_linear(win_enc), 0, 7)[:, 0]
+        )
+        win_prob = torch.clip(self.wins_linear(pool_enc[:, 0]), 0, 7)[:, 0]
+
+        # use the same representation to predict which cards will make the maindeck
+        maindeck_preds = self.maindeck_pred_head(pool_enc[:, 1:])
 
         # add an embedding representing whether an index in the eventual output
         # is a current pick option or a part of the pool you've already drafted
@@ -170,16 +198,30 @@ class DraftTransformer(pl.LightningModule):
         pick_enc = self.pick_transformer(concatenated)[:, : self.n_cards_in_pack]
         pick_linear_outputs = self.pick_linear(pick_enc)[:, :, 0]
 
-        return pick_linear_outputs, win_prob
+        return pick_linear_outputs, win_prob, maindeck_preds
 
     def forward(
         self, x: T.Dict[str, torch.Tensor] = {}, *args, **kwargs
-    ) -> T.Tuple[torch.Tensor, torch.Tensor]:
-        pick, win = self._forward(x, self.device)  # type: ignore
-        return pick, win
+    ) -> T.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        pick, win, maindeck_preds = self._forward(x, self.device)  # type: ignore
+        return pick, win, maindeck_preds
 
     def step(self, x: T.Dict[str, torch.Tensor], mode: str) -> torch.Tensor:
-        pick_preds, win_preds = self(x)
+        pick_preds, win_preds, maindeck_preds = self(x)
+
+        # compute the mask for the maindeck rates. the model shouldn't see
+        # info about any future picks' maindeck_rate
+        maindeck_mask = x["maindeck_rates"] != -1
+        maindeck_loss_value = self.maindeck_loss(
+            maindeck_preds[maindeck_mask],
+            x["maindeck_rates"][maindeck_mask].reshape(-1, 1),
+        )
+        weighted_maindeck_loss_value = maindeck_loss_value * x["maindeck_weights"]
+
+        self.log(f"loss/{mode}/maindeck_loss", maindeck_loss_value.mean())
+        self.log(
+            f"loss/{mode}/maindeck_loss_weighted", weighted_maindeck_loss_value.mean()
+        )
 
         pick_loss = self.pick_loss(pick_preds, x["picks"])
         self.log(f"loss/{mode}/pick_loss", pick_loss.mean())
@@ -190,7 +232,11 @@ class DraftTransformer(pl.LightningModule):
         self.log(f"loss/{mode}/wins_loss", wins_loss.mean())
         weighted_wins = wins_loss * x["wins_weights"]
         self.log(f"loss/{mode}/wins_loss_weighted", weighted_wins.mean())
-        loss = weighted_pick.mean() + weighted_wins.mean()
+        loss = (
+            weighted_pick.mean()
+            + weighted_wins.mean()
+            + weighted_maindeck_loss_value.mean()
+        )
         self.log(f"loss/{mode}/total", loss)
 
         self.metrics[f"{mode}"](pick_preds, x["picks"])
@@ -199,29 +245,6 @@ class DraftTransformer(pl.LightningModule):
         if mode == "train":
             lrs = self.lr_schedulers()
             self.log(f"lr", lrs.get_last_lr()[0])  # type: ignore
-
-        # for round in list(set(x["round"])):
-        #     mask = x["round"] == round
-        #     # print(x["picks"], round, mask)
-        #     if mask.shape[0] > 0:
-        #         self.log(
-        #             f"epoch/{mode}/acc_round_{round:0>2}",
-        #             self.metrics[f"{mode}_accuracy_round_{round:0>2}"](
-        #                 pick_preds[mask],
-        #                 x["picks"][mask],
-        #             ),
-        #             on_epoch=True,
-        #             on_step=False,
-        #         )
-        #         self.log(
-        #             f"epoch/{mode}/wins_round_{round:0>2}",
-        #             self.metrics[f"{mode}_mae_round_{round:0>2}"](
-        #                 win_preds[mask],
-        #                 x["num_wins"][mask],
-        #             ),
-        #             on_epoch=True,
-        #             on_step=False,
-        #         )
 
         return loss
 
@@ -233,13 +256,15 @@ class DraftTransformer(pl.LightningModule):
 
     def configure_optimizers(self):
 
-        optimizer = torch.optim.Adam(params=self.parameters(), lr=1e-6)
+        optimizer = torch.optim.SGD(
+            params=self.parameters(), lr=1e-6, momentum=0.8, weight_decay=1e-6
+        )
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            max_lr=1e-4,
-            total_steps=self.n_steps,
-            pct_start=0.05,
-            div_factor=250,
+            max_lr=1e-2,
+            total_steps=self.n_steps_oclr,
+            pct_start=0.2,
+            div_factor=100,
         )
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
@@ -265,6 +290,10 @@ def collate_batch(
         (len(inputs), n_cards_in_pack), dtype=torch.int, device=device
     )
     picks = torch.zeros((len(inputs)), dtype=torch.long, device=device)
+    maindeck_rates = -1 * torch.ones(
+        (len(inputs), 3 * (n_cards_in_pack - 1)), dtype=torch.float, device=device
+    )
+    maindeck_weights: T.List[float] = []
     for n, x in enumerate(inputs):
         history_n = x["history"]
         for m, history_round in enumerate(history_n):
@@ -279,8 +308,11 @@ def collate_batch(
         if not inference:
             try:
                 picks[n] = x["options"].index(x["picked"])  # type: ignore
+                maindeck_rates[n, : len(x["pool"])] = torch.tensor(x["maindeck_rates"][: len(x["pool"])], dtype=torch.float, device=device)  # type: ignore
+                maindeck_weights.extend(
+                    [T.cast(float, x["pick_weight"]) for _ in range(len(x["pool"]))]
+                )
             except Exception as e:
-                print("whoops")
                 print(picks[n])
                 print(x["draft"])
                 raise (e)
@@ -291,6 +323,10 @@ def collate_batch(
     if not inference:
         output["picks"] = picks
         output["round"] = torch.tensor([x["round"] for x in inputs], dtype=torch.int, device=device)  # type: ignore
+        output["maindeck_rates"] = maindeck_rates
+        output["maindeck_weights"] = torch.tensor(
+            maindeck_weights, dtype=torch.float, device=device
+        )
 
         if "wins_weight" in inputs[0]:
             win_weights = torch.tensor([x["wins_weight"] for x in inputs], dtype=torch.float, device=device)  # type: ignore

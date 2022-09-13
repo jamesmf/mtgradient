@@ -33,6 +33,8 @@ Any drafts that seem incomplete (0 wins, 0 losses) are dropped. Any incomplete d
 
 The dataset is split by time: the final period of the draft is the validation set and the rest is the training set. Hopefully this makes the validation set approximately mirror the way a competition would work if it cycled back around on Arena today.
 
+Note: Scryfall provides card data like `cmc` which is useful for initializing the card representations.
+
 ### Results
 
 Using the NEO Premier Draft data and preprocessing as above, an early model without much hyperparameter tuning achieves about 71% validation accuracy, where the validation set is just the final day of drafting (1260 drafts).

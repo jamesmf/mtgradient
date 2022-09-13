@@ -5,8 +5,14 @@ import datetime
 import numpy as np
 import torch
 
-from .processing import DraftDataType, round_to_pack_and_pick
-from .constants import N_PACKS, N_CARDS_IN_PACK, TOTAL_PICKS, N_PICKS_PER_PACK
+from .processing import round_to_pack_and_pick, WholeDraft
+from .constants import (
+    N_PACKS,
+    N_CARDS_IN_PACK,
+    TOTAL_PICKS,
+    N_PICKS_PER_PACK,
+    PlayerRank,
+)
 
 # downweight the first pick (anti-raredrafting)
 # and place most of the emphasis on the rounds with
@@ -40,12 +46,12 @@ DEFAULT_WIN_PRED_WEIGHING = {k: (k + 1) / TOTAL_PICKS for k in range(TOTAL_PICKS
 
 # weight loss for higher levels of play much higher
 DEFAULT_WEIGHTING_BY_RANK = {
-    "mythic": 8,
-    "diamond": 8,
-    "platinum": 4,
-    "gold": 1,
-    "silver": 0.25,
-    "bronze": 0.125,
+    PlayerRank.mythic.name: 8,
+    PlayerRank.diamond.name: 8,
+    PlayerRank.platinum.name: 4,
+    PlayerRank.gold.name: 1,
+    PlayerRank.silver.name: 0.25,
+    PlayerRank.bronze.name: 0.125,
     "": 0.01,
 }
 
@@ -53,7 +59,7 @@ DEFAULT_WEIGHTING_BY_RANK = {
 class DraftDataset(torch.utils.data.Dataset):
     def __init__(
         self,
-        dataset: T.Dict[str, T.Any],
+        dataset: T.Dict[str, WholeDraft],
         recent_cutoff: datetime.date,
         recency_weight: float = 0.15,
         pick_weighting: T.Dict[int, float] = DEFAULT_PICK_WEIGHTING,
@@ -110,19 +116,20 @@ class DraftDataset(torch.utils.data.Dataset):
             "num_wins": draft["event_match_wins"],
             "draft": draft,
             "round": round_num,
+            "maindeck_rates": draft["maindeck_rates"],
         }
 
-    def get_weights(
-        self, draft: DraftDataType, round_num: int
-    ) -> T.Tuple[float, float]:
+    def get_weights(self, draft: WholeDraft, round_num: int) -> T.Tuple[float, float]:
         # pay more attention if the user wins a lot, and less if they don't
-        user_wins_factor: float = np.clip(draft.get("user_game_win_rate_bucket", 0.5) * 2, 0.6, 1.2)  # type: ignore
+        user_wins_factor: float = np.clip(
+            draft.get("user_game_win_rate_bucket", 0.5) * 2, 0.6, 1.2
+        )
 
         # put more weight on more-winning decks
-        wins_factor: float = draft.get("event_match_wins", 3) / 14 + 0.5  # type: ignore
+        wins_factor: float = draft.get("event_match_wins", 3) / 14 + 0.5
 
         # weight loss by rank
-        rank: str = draft["rank"]  # type: ignore
+        rank = draft["rank"]
         rank_weighting = self.rank_weighting[rank]
 
         pack_num, pick_num = round_to_pack_and_pick(
@@ -141,7 +148,7 @@ class DraftDataset(torch.utils.data.Dataset):
             * user_wins_factor
         )
         # if they didn't play until 7wins/3losses, then don't try to predict wins at all
-        mw: int = draft.get("event_match_wins", 0)  # type: ignore
+        mw: int = draft.get("event_match_wins", 0)
         if mw < 7 and draft.get("event_match_losses", 0) != 3:
             num_wins_weight = 0
         return (pick_weight, num_wins_weight)
