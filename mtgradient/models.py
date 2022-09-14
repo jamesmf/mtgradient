@@ -6,8 +6,9 @@ import numpy as np
 from torchmetrics import Accuracy, MeanAbsoluteError
 import torchmetrics.functional
 import sklearn.metrics
+import pandas as pd
 
-from .constants import N_PACKS, N_CARDS_IN_PACK
+from .constants import N_PACKS, N_CARDS_IN_PACK, PlayerRank
 
 
 class DraftTransformer(pl.LightningModule):
@@ -102,6 +103,7 @@ class DraftTransformer(pl.LightningModule):
         self.wins_loss = torch.nn.L1Loss(reduction="none")
         self.maindeck_loss = torch.nn.BCEWithLogitsLoss(reduction="none")
         self.metrics: T.Dict[str, T.Union[Accuracy, MeanAbsoluteError]] = {}
+        self.test_data: T.List[T.Any] = []
         for split in ("train", "val", "test"):
             acc = Accuracy(average="samples")
             setattr(self, f"{split}_accuracy", acc)
@@ -245,6 +247,24 @@ class DraftTransformer(pl.LightningModule):
         if mode == "train":
             lrs = self.lr_schedulers()
             self.log(f"lr", lrs.get_last_lr()[0])  # type: ignore
+        if mode == "test":
+            maindeck_loss_df = pd.DataFrame(
+                zip(maindeck_loss_value, x["maindeck_round_inds"]),
+                columns=["loss_val", "batch_ind"],
+            )
+            maindeck_loss_reduced = (
+                maindeck_loss_df.groupby("batch_ind").mean()["loss_val"].values
+            )
+            for rank, pick_loss_value, md_loss_val in zip(
+                x["rank"], pick_loss, maindeck_loss_reduced
+            ):
+                self.test_data.append(
+                    [
+                        int(rank.detach().cpu().numpy()),
+                        float(pick_loss_value.detach().cpu().numpy()),
+                        md_loss_val,
+                    ]
+                )
 
         return loss
 
@@ -253,6 +273,9 @@ class DraftTransformer(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         return self.step(batch, mode="val")
+
+    def test_step(self, batch, batch_idx):
+        return self.step(batch, mode="test")
 
     def configure_optimizers(self):
 
@@ -294,6 +317,7 @@ def collate_batch(
         (len(inputs), 3 * (n_cards_in_pack - 1)), dtype=torch.float, device=device
     )
     maindeck_weights: T.List[float] = []
+    maindeck_round_inds: T.List[int] = []
     for n, x in enumerate(inputs):
         history_n = x["history"]
         for m, history_round in enumerate(history_n):
@@ -312,6 +336,7 @@ def collate_batch(
                 maindeck_weights.extend(
                     [T.cast(float, x["pick_weight"]) for _ in range(len(x["pool"]))]
                 )
+                maindeck_round_inds.extend([n for _ in range(len(x["pool"]))])
             except Exception as e:
                 print(picks[n])
                 print(x["draft"])
@@ -321,12 +346,18 @@ def collate_batch(
     output["pool"] = pools
     output["pick_options"] = pick_options
     if not inference:
+        output["rank"] = torch.tensor(
+            [PlayerRank[T.cast(str, i["rank"])].value for i in inputs],
+            device="cpu",
+            dtype=torch.int,
+        )
         output["picks"] = picks
         output["round"] = torch.tensor([x["round"] for x in inputs], dtype=torch.int, device=device)  # type: ignore
         output["maindeck_rates"] = maindeck_rates
         output["maindeck_weights"] = torch.tensor(
             maindeck_weights, dtype=torch.float, device=device
         )
+        output["maindeck_round_inds"] = maindeck_round_inds  # type: ignore
 
         if "wins_weight" in inputs[0]:
             win_weights = torch.tensor([x["wins_weight"] for x in inputs], dtype=torch.float, device=device)  # type: ignore

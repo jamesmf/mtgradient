@@ -1,4 +1,5 @@
 import typing as T
+import datetime
 
 
 class MTGSet:
@@ -25,6 +26,8 @@ class HBG(MTGSet):
 class SNC(MTGSet):
     def __init__(self):
         self.n_cards_in_pack = 15
+        test_dates: T.Dict[str, datetime.date] = {"premier": datetime.date(2022, 6, 18)}
+        val_dates: T.Dict[str, datetime.date] = {"premier": datetime.date(2022, 6, 17)}
         super().__init__()
 
 

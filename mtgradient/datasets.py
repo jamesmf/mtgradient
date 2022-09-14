@@ -117,6 +117,7 @@ class DraftDataset(torch.utils.data.Dataset):
             "draft": draft,
             "round": round_num,
             "maindeck_rates": draft["maindeck_rates"],
+            "rank": draft["rank"],
         }
 
     def get_weights(self, draft: WholeDraft, round_num: int) -> T.Tuple[float, float]:
