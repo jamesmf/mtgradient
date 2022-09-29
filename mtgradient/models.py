@@ -1,14 +1,15 @@
 import typing as T
 import json
+from collections import defaultdict
+
 import torch
 import pytorch_lightning as pl
 import numpy as np
 from torchmetrics import Accuracy, MeanAbsoluteError
-import torchmetrics.functional
-import sklearn.metrics
 import pandas as pd
 
 from .constants import N_PACKS, N_CARDS_IN_PACK, PlayerRank
+from .datasets import DraftDataPoint
 
 
 class DraftTransformer(pl.LightningModule):
@@ -33,7 +34,7 @@ class DraftTransformer(pl.LightningModule):
         n_layers_pool: int = 3,
         n_heads_pick: int = 8,
         n_layers_pick: int = 6,
-        n_steps: int = 30000,
+        n_steps: int = 40000,
         dropout: float = 0.25,
     ):
         super().__init__()
@@ -53,6 +54,17 @@ class DraftTransformer(pl.LightningModule):
         # is part of the current round's options or if it's in the
         # pool
         self.pick_vs_pool_embedding = torch.nn.Embedding(2, emb_dim)
+
+        # embedding for how many of a card you have. if you have two copies
+        # of a card, we need a way to know which is the 'first' copy in
+        # order to accurately predict if each copy will make the maindeck
+        self.card_copies_embedding = torch.nn.Embedding(45, emb_dim)
+
+        # embedding for which format we're in (Premier, Traditional, Quick, ?)
+        self.format_embedding = torch.nn.Embedding(4, emb_dim)
+
+        # embedding for which set we're playing in
+        self.set_embedding = torch.nn.Embedding(10, emb_dim)
 
         self.layernorm = torch.nn.LayerNorm(emb_dim)
 
@@ -143,12 +155,21 @@ class DraftTransformer(pl.LightningModule):
         history = x["history"]  # (batch_size, total_picks, n_cards_in_pack)
         pool = x["pool"]  # (batch_size, max_round_in_batch)
         pick_options = x["pick_options"]  #  (batch_size, n_cards_in_pack)
+        card_copies = x["card_copies"]  # (batch_size, max_round_in_batch)
+        set_ids = x["set_ids"]
+        format_ids = x["format_ids"]
+
+        batch_size = history.shape[0]
+
+        set_emb = self.set_embedding(set_ids) * 0.125
+        format_emb = self.format_embedding(format_ids) * 0.125
+        set_format_emb = set_emb + format_emb
 
         history_emb = self.dropout(
             self.card_embedding(history)
         )  # (batch_size, max_round_in_batch, n_cards_in_pack, emb_dim)
         pool_emb = self.dropout(
-            self.card_embedding(pool)
+            self.card_embedding(pool) + 0.25 * self.card_copies_embedding(card_copies)
         )  # (batch_size, max_round_in_batch, emb_dim)
         pick_options_emb = self.dropout(
             self.card_embedding(pick_options)
@@ -167,7 +188,7 @@ class DraftTransformer(pl.LightningModule):
         pool_mask = torch.concat((pool_mask_zero, pool_mask), dim=1)
         pool_mean = pool_emb.mean(dim=1).unsqueeze(1)
         pool_enc = self.pool_transformer(
-            torch.concat((pool_mean, pool_emb), dim=1),
+            torch.concat((pool_mean + set_format_emb.unsqueeze(1), pool_emb), dim=1),
             src_key_padding_mask=pool_mask,
         )
         win_prob = torch.clip(self.wins_linear(pool_enc[:, 0]), 0, 7)[:, 0]
@@ -195,7 +216,10 @@ class DraftTransformer(pl.LightningModule):
 
         # now concatenate the pick options, the pool so far and the history of cards passed
         # and pass it through the transformer
-        concatenated = torch.cat([pick_options_emb, pool_emb, history_emb], dim=1)
+        concatenated = torch.cat(
+            [pick_options_emb, pool_emb, history_emb, set_format_emb.unsqueeze(1)],
+            dim=1,
+        )
         concatenated = self.dropout(concatenated)
         pick_enc = self.pick_transformer(concatenated)[:, : self.n_cards_in_pack]
         pick_linear_outputs = self.pick_linear(pick_enc)[:, :, 0]
@@ -284,18 +308,17 @@ class DraftTransformer(pl.LightningModule):
         )
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            max_lr=1e-2,
+            max_lr=2e-3,
             total_steps=self.n_steps_oclr,
             pct_start=0.2,
             div_factor=100,
+            final_div_factor=500,
         )
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
 
 def collate_batch(
-    inputs: T.Sequence[
-        T.Dict[str, T.Union[T.List[T.List[int]], T.List[int], torch.Tensor]]
-    ],
+    inputs: T.Sequence[DraftDataPoint],
     n_cards_in_pack: int = N_CARDS_IN_PACK,
     device="cpu",
     inference=False,
@@ -313,26 +336,44 @@ def collate_batch(
         (len(inputs), n_cards_in_pack), dtype=torch.int, device=device
     )
     picks = torch.zeros((len(inputs)), dtype=torch.long, device=device)
+    format_ids = torch.zeros((len(inputs)), dtype=torch.long, device=device)
+    set_ids = torch.zeros((len(inputs)), dtype=torch.long, device=device)
     maindeck_rates = -1 * torch.ones(
         (len(inputs), 3 * (n_cards_in_pack - 1)), dtype=torch.float, device=device
     )
     maindeck_weights: T.List[float] = []
     maindeck_round_inds: T.List[int] = []
+    # pool counts keeps track of copies. if you have 2 of a card, the second one gets
+    # a 1, the third gets a 2, ...
+    pool_counts = torch.zeros(
+        (len(inputs), 3 * (n_cards_in_pack - 1)), dtype=torch.int, device=device
+    )
     for n, x in enumerate(inputs):
         history_n = x["history"]
         for m, history_round in enumerate(history_n):
             try:
-                histories[n, m, : len(history_round)] = torch.tensor(history_round)  # type: ignore
+                histories[n, m, : len(history_round)] = torch.tensor(history_round)
             except Exception as e:
                 print(history_round)
                 print(inputs[n])
                 raise e
-        pools[n, : len(x["pool"])] = torch.tensor(x["pool"])  # type: ignore
-        pick_options[n, : len(x["options"])] = torch.tensor(x["options"])  # type: ignore
+        pools[n, : len(x["pool"])] = torch.tensor(x["pool"])
+        pick_options[n, : len(x["options"])] = torch.tensor(x["options"])
+        card_copies: T.Dict[int, int] = defaultdict(lambda: 0)
+        for pool_ind, pool_card in enumerate(x["pool"]):
+            if pool_card in card_copies:
+                pool_counts[n, pool_ind] = card_copies[pool_card]
+            card_copies[pool_card] += 1
         if not inference:
             try:
-                picks[n] = x["options"].index(x["picked"])  # type: ignore
-                maindeck_rates[n, : len(x["pool"])] = torch.tensor(x["maindeck_rates"][: len(x["pool"])], dtype=torch.float, device=device)  # type: ignore
+                picks[n] = x["options"].index(x["picked"])
+                format_ids[n] = x["format_id_int"]
+                set_ids[n] = x["set_id_int"]
+                maindeck_rates[n, : len(x["pool"])] = torch.tensor(
+                    x["maindeck_rates"][: len(x["pool"])],
+                    dtype=torch.float,
+                    device=device,
+                )
                 maindeck_weights.extend(
                     [T.cast(float, x["pick_weight"]) for _ in range(len(x["pool"]))]
                 )
@@ -345,23 +386,34 @@ def collate_batch(
     output["history"] = histories
     output["pool"] = pools
     output["pick_options"] = pick_options
+    output["card_copies"] = pool_counts
+    output["format_ids"] = format_ids
+    output["set_ids"] = set_ids
     if not inference:
         output["rank"] = torch.tensor(
-            [PlayerRank[T.cast(str, i["rank"])].value for i in inputs],
-            device="cpu",
+            [i["rank_id"] for i in inputs],
+            device=device,
             dtype=torch.int,
         )
         output["picks"] = picks
-        output["round"] = torch.tensor([x["round"] for x in inputs], dtype=torch.int, device=device)  # type: ignore
+        output["round"] = torch.tensor(
+            [x["round"] for x in inputs], dtype=torch.int, device=device
+        )
         output["maindeck_rates"] = maindeck_rates
         output["maindeck_weights"] = torch.tensor(
             maindeck_weights, dtype=torch.float, device=device
         )
-        output["maindeck_round_inds"] = maindeck_round_inds  # type: ignore
+        output["maindeck_round_inds"] = torch.tensor(
+            maindeck_round_inds, dtype=torch.float, device=device
+        )
 
         if "wins_weight" in inputs[0]:
-            win_weights = torch.tensor([x["wins_weight"] for x in inputs], dtype=torch.float, device=device)  # type: ignore
-            pick_weights = torch.tensor([x["pick_weight"] for x in inputs], dtype=torch.float, device=device)  # type: ignore
+            win_weights = torch.tensor(
+                [x["wins_weight"] for x in inputs], dtype=torch.float, device=device
+            )
+            pick_weights = torch.tensor(
+                [x["pick_weight"] for x in inputs], dtype=torch.float, device=device
+            )
             output["wins_weights"] = win_weights
             output["pick_weights"] = pick_weights
         if "num_wins" in inputs[0]:

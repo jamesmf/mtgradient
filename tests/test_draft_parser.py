@@ -108,7 +108,7 @@ def test_maindeck_rate_in_draft(parsed_csv):
     ), f"max(maindeck_rates) of dace9c349b224cf4a12a151d578ce870 should be 1"
 
 
-def test_fail(parsed_csv):
-    ds, card_ids = parsed_csv
-    print(ds["dace9c349b224cf4a12a151d578ce870"])
-    assert False
+# def test_fail(parsed_csv):
+#     ds, card_ids = parsed_csv
+#     print(ds["dace9c349b224cf4a12a151d578ce870"])
+#     assert False
