@@ -34,6 +34,9 @@ class WholeDraft(T.TypedDict, total=False):
     user_game_win_rate_bucket: float
     event_match_wins: int
     event_match_losses: int
+    set_id_str: str
+    set_id_int: int
+    format_id_int: int
 
 
 DictDataset = T.Dict[str, WholeDraft]
@@ -120,15 +123,11 @@ def parse_row(
     row: T.Sequence[T.Any],
     colmap: T.Dict[int, T.Dict[str, str]],
     card_map: T.Dict[str, int],
-    pack_col_bounds: T.Tuple[int, int],
+    pack_inds: T.List[int],
 ) -> T.Dict[str, T.Union[str, T.List[int], float, int]]:
     # base = {colmap[n]["name"]: val for n, val in enumerate(row[:11])}
     base = {v["name"]: row[k] for k, v in colmap.items() if v["type"] == "basic"}
-    pack_names = [
-        colmap[n + pack_col_bounds[0]]["name"]
-        for n, val in enumerate(row[pack_col_bounds[0] : pack_col_bounds[1] + 1])
-        if val == "1"
-    ]
+    pack_names = [colmap[n]["name"] for n in pack_inds if row[n] == "1"]
     # pack_names += [base["pick"]]
     np.random.shuffle(pack_names)
     pick_ind = pack_names.index(base["pick"])
@@ -158,7 +157,7 @@ def add_row_to_draft_dataset(
         dataset[draft_id]["rank_id"] = (
             PlayerRank[T.cast(str, row["rank"])].value
             if row["rank"] in PlayerRank.__members__
-            else PlayerRank.bronze.value
+            else PlayerRank.gold.value
         )
 
     pack_number = int(row["pack_number"])  # type: ignore
@@ -189,14 +188,20 @@ def add_wheels(ds: DictDataset):
 
 
 def parse_csv(
-    csv_path: str, verbose: bool = False
+    csv_path: str,
+    verbose: bool = False,
+    card_name_to_id: T.Optional[T.Dict[str, int]] = None,
+    set_id_str: str = "",
+    set_id_int: int = 0,
+    format_id_int: int = 0,
+    limit_rows: T.Optional[int] = None,
 ) -> T.Tuple[DictDataset, T.Dict[str, int]]:
     dataset = {}  # type: ignore
     cols = pd.read_csv(csv_path, nrows=0).columns
     colmap = get_colmap(cols)
-    card_name_to_id: T.Dict[str, int] = {"": 0}
+    if card_name_to_id is None:
+        card_name_to_id = {"": 0}
     pack_inds = [ind for ind, val in colmap.items() if val["type"] == "pack"]
-    pack_col_bounds = (min(pack_inds), max(pack_inds) + 1)
     with open(csv_path, "r") as f:
         consumer = csv.reader(f)
         if verbose:
@@ -204,8 +209,10 @@ def parse_csv(
         for n, row in enumerate(consumer):
             if n == 0:
                 continue
-            parsed = parse_row(row, colmap, card_name_to_id, pack_col_bounds)
+            parsed = parse_row(row, colmap, card_name_to_id, pack_inds)
             add_row_to_draft_dataset(parsed, dataset)
+            if limit_rows is not None and n > limit_rows:
+                break
     # remove some data that doesn't look right
     for_removal = set()
     removal_reasons = defaultdict(list)
@@ -216,8 +223,7 @@ def parse_csv(
         if 0 in draft["pick_data"]:
             for_removal.add(draft_id)
             removal_reasons[draft_id].append("invalid_pick_data")
-            print(draft["pick_data"])
-        if draft["rank"] not in ("mythic", "diamond", "platinum", "gold"):
+        if draft["rank_id"] < PlayerRank.gold.value:
             for_removal.add(draft_id)
             removal_reasons[draft_id].append("rank_below_gold")
         if float(draft["user_game_win_rate_bucket"]) <= 0.5:
@@ -228,8 +234,8 @@ def parse_csv(
         print(f"number to remove: {len(for_removal)}")
     for draft_id in list(for_removal):
         dataset.pop(draft_id)
-        if verbose:
-            print(f"{draft_id} removed because: {removal_reasons[draft_id]}")
+        # if verbose:
+        #     print(f"{draft_id} removed because: {removal_reasons[draft_id]}")
     add_wheels(dataset)
     for key in dataset.keys():
         raw = dataset[key]
@@ -246,6 +252,9 @@ def parse_csv(
             user_game_win_rate_bucket=raw["user_game_win_rate_bucket"],
             event_match_wins=raw["event_match_wins"],
             event_match_losses=raw["event_match_losses"],
+            set_id_int=set_id_int,
+            set_id_str=set_id_str,
+            format_id_int=format_id_int,
         )
     return dataset, card_name_to_id
 
