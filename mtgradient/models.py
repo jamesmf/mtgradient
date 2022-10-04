@@ -36,6 +36,9 @@ class DraftTransformer(pl.LightningModule):
         n_layers_pick: int = 6,
         n_steps: int = 40000,
         dropout: float = 0.25,
+        pick_loss_weight: float = 1.0,
+        maindeck_loss_weight: float = 0.75,
+        win_loss_weight: float = 0.5,
     ):
         super().__init__()
 
@@ -43,6 +46,9 @@ class DraftTransformer(pl.LightningModule):
         self.n_cards_in_pack = n_cards_in_pack
         self.total_picks = self.n_cards_in_pack * 3
         self.n_steps = n_steps
+        self.pick_loss_weight = pick_loss_weight
+        self.maindeck_loss_weight = maindeck_loss_weight
+        self.win_loss_weight = win_loss_weight
 
         # embeds a card id
         self.card_embedding = torch.nn.Embedding(
@@ -259,9 +265,9 @@ class DraftTransformer(pl.LightningModule):
         weighted_wins = wins_loss * x["wins_weights"]
         self.log(f"loss/{mode}/wins_loss_weighted", weighted_wins.mean())
         loss = (
-            weighted_pick.mean()
-            + weighted_wins.mean()
-            + weighted_maindeck_loss_value.mean()
+            weighted_pick.mean() * self.pick_loss_weight
+            + weighted_wins.mean() * self.win_loss_weight
+            + weighted_maindeck_loss_value.mean() * self.maindeck_loss_weight
         )
         self.log(f"loss/{mode}/total", loss)
 
@@ -304,13 +310,13 @@ class DraftTransformer(pl.LightningModule):
     def configure_optimizers(self):
 
         optimizer = torch.optim.SGD(
-            params=self.parameters(), lr=1e-6, momentum=0.8, weight_decay=1e-6
+            params=self.parameters(), lr=1e-6, weight_decay=1e-6
         )
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            max_lr=2e-3,
+            max_lr=3e-3,
             total_steps=self.n_steps_oclr,
-            pct_start=0.2,
+            pct_start=0.3,
             div_factor=100,
             final_div_factor=500,
         )

@@ -53,10 +53,10 @@ DEFAULT_WIN_PRED_WEIGHING = {k: (k + 1) / TOTAL_PICKS for k in range(TOTAL_PICKS
 
 # weight loss for higher levels of play much higher
 DEFAULT_WEIGHTING_BY_RANK = {
-    PlayerRank.mythic.name: 8,
-    PlayerRank.diamond.name: 8,
-    PlayerRank.platinum.name: 4,
-    PlayerRank.gold.name: 1,
+    PlayerRank.mythic.name: 6,
+    PlayerRank.diamond.name: 4,
+    PlayerRank.platinum.name: 1,
+    PlayerRank.gold.name: 0.5,
     PlayerRank.silver.name: 0.25,
     PlayerRank.bronze.name: 0.125,
     "": 0.01,
@@ -167,7 +167,7 @@ class DraftDataset(torch.utils.data.Dataset):
         wins_factor: float = draft.get("event_match_wins", 3) / 14 + 0.5
 
         # weight loss by rank
-        rank = draft["rank"]
+        rank = draft["rank"] if draft["rank"] in PlayerRank.__members__ else ""
         rank_weighting = self.rank_weighting[rank]
 
         pack_num, pick_num = round_to_pack_and_pick(

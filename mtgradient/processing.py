@@ -103,6 +103,10 @@ def get_colmap(cols: T.List[str]) -> T.Dict[int, T.Dict[str, str]]:
     pool_patt = re.compile("pool_(.+)")
     colmap = {}
     for n, col in enumerate(cols):
+        if col == "user_rank":
+            col = "rank"
+        if col == "user_match_win_rate_bucket":
+            col = "user_game_win_rate_bucket"
         if n < 11:
             colmap[n] = {"name": col, "type": "basic"}
         else:

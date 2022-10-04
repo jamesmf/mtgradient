@@ -16,6 +16,23 @@ class MTGSet:
         self.total_picks = self.n_packs * self.n_picks_per_pack
 
 
+class MID(MTGSet):
+    name = "MID"
+
+    def __init__(self):
+        self.n_cards_in_pack = 15
+        self.val_dates: T.Dict[str, datetime.date] = {
+            "premier": datetime.datetime(2021, 10, 16, 0),
+        }
+        self.test_dates: T.Dict[str, datetime.date] = {
+            "premier": datetime.datetime(2021, 10, 17, 0),
+        }
+        self.recent_game_dates: T.Dict[str, datetime.date] = {
+            "premier": datetime.datetime(2022, 10, 10, 0),
+        }
+        super().__init__()
+
+
 class NEO(MTGSet):
     name = "NEO"
 
@@ -71,6 +88,7 @@ class DMU(MTGSet):
 expansion_dict: T.Dict[str, MTGSet] = {
     s.name: s
     for s in (
+        MID(),
         NEO(),
         HBG(),
         SNC(),
