@@ -38,7 +38,7 @@ class DraftTransformer(pl.LightningModule):
         dropout: float = 0.25,
         pick_loss_weight: float = 1.0,
         maindeck_loss_weight: float = 0.75,
-        win_loss_weight: float = 0.5,
+        win_loss_weight: float = 0.0,
     ):
         super().__init__()
 
@@ -123,7 +123,7 @@ class DraftTransformer(pl.LightningModule):
         self.metrics: T.Dict[str, T.Union[Accuracy, MeanAbsoluteError]] = {}
         self.test_data: T.List[T.Any] = []
         for split in ("train", "val", "test"):
-            acc = Accuracy(average="samples")
+            acc = Accuracy(task='multiclass', average="micro", num_classes=self.n_cards_in_pack)
             setattr(self, f"{split}_accuracy", acc)
             self.metrics[split] = acc
             # for n in range(self.n_cards_in_pack * 3):
@@ -316,9 +316,11 @@ class DraftTransformer(pl.LightningModule):
             optimizer,
             max_lr=3e-3,
             total_steps=self.n_steps_oclr,
-            pct_start=0.3,
-            div_factor=100,
-            final_div_factor=500,
+            pct_start=0.1,
+            div_factor=25,
+            final_div_factor=10,
+            # three_phase=True,
+            # anneal_strategy="linear",
         )
         return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 

@@ -15,7 +15,7 @@ services:
     # environment:
     ports:
       - 8888:8888
-    command: python -m notebook --allow-root --ip 0.0.0.0 --no-browser
+    command: python -m notebook --allow-root --ip 0.0.0.0 --no-browser --NotebookApp.token=mtg
 
   mlflow-server:
     image: mtgradient-training:latest

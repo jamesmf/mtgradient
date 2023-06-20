@@ -6,3 +6,4 @@ data/*
 *Untitled*
 lightning_logs/*
 *__pycache__*
+artifacts/*
